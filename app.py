@@ -13,14 +13,13 @@ st.set_page_config(
 )
 
 st.title("🏠 부산 부동산 실질 주거비 & 자산 성장 시뮬레이터")
-st.caption("기회비용 · 숨은 부대비용 · 정책대출 룰셋 · 월세 세액공제 · 연도별 시세 트렌드")
+st.caption("기회비용 · 숨은 부대비용 · 정책대출 룰셋 · 월 적립식 복리투자 엔진 · 연도별 시세 트렌드")
 
 # -----------------------------------------------------------------------------
 # 사이드바: 입력 제어 패널
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.header("1. 매물 정보 설정")
-    # [요구사항 1] 연제구 추가
     district = st.selectbox(
         "부산 자치구 선택",
         ["해운대구", "수영구", "연제구", "부산진구", "남구", "동래구", "기장군", "사하구", "북구", "금정구", "강서구"]
@@ -45,6 +44,26 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("3. 대체투자 기회비용 엔진")
+    
+    # [설명팁 적용] 매월 저축/투자 가용 예산 입력
+    monthly_invest_budget = st.number_input(
+        "매월 저축/투자 가능 예산 (만원/월)", 
+        value=150, 
+        min_value=0, 
+        step=10,
+        help="월급 중 주거비(이자/월세) 지출 및 금융투자에 투입할 수 있는 총 가용 자금입니다."
+    )
+    
+    # 사이드바 설명 팁 아코디언
+    with st.expander("💡 **적립식 복리 엔진이란? (원리 보기)**"):
+        st.markdown(f"""
+        **Q. 어떻게 적용되나요?**
+        - 매달 월급에서 모으는 **{monthly_invest_budget}만원** 중, 각 주거방식의 **월 주거비(대출이자/월세)를 먼저 지출**합니다.
+        - **지출하고 남은 잔여 월급**이 매달 주식/ETF/예적금에 **자동으로 적립식 복리 투자**되어 자산으로 쌓입니다!
+        
+        *예: 전세를 살면 집값은 안 오르지만 매달 나가는 이자가 적어, 남는 월급으로 주식을 매달 더 많이 사 모을 수 있습니다.*
+        """)
+
     invest_preset = st.radio(
         "투자 성향 프리셋",
         ["보수적 (예적금 3.5%)", "중립적 (배당/채권 5.0%)", "적극적 (S&P 500 ETF 8.0%)", "직접 입력"],
@@ -61,7 +80,8 @@ with st.sidebar:
         pre_tax_rate = st.slider("기대 연수익률 (%)", min_value=1.0, max_value=15.0, value=8.0, step=0.5)
 
     after_tax_rate = (pre_tax_rate / 100) * (1 - 0.154)
-    st.info(f"💡 세후 실질 복리 수익률: **{after_tax_rate*100:.2f}%** 적용")
+    monthly_r = ((1 + after_tax_rate) ** (1/12)) - 1
+    st.info(f"💡 세후 실질 복리 수익률: **연 {after_tax_rate*100:.2f}%** (월 {monthly_r*100:.3f}%) 적용")
 
     st.markdown("---")
     st.header("4. 시뮬레이션 변수")
@@ -74,9 +94,6 @@ with st.sidebar:
 tab1, tab2 = st.tabs(["📊 매매 vs 전세 vs 월세 비교 & BEP", "📈 부산 자치구별 시세 트렌드 (연도별)"])
 
 with tab1:
-    # -------------------------------------------------------------
-    # 핵심 계산 로직
-    # -------------------------------------------------------------
     # 1. 깡통전세 위험도
     jeonse_ratio = (jeonse_price / buy_price) * 100
     if jeonse_ratio < 70:
@@ -89,17 +106,16 @@ with tab1:
         risk_badge = f"🔴 **깡통전세 위험 매물** (전세가율 {jeonse_ratio:.1f}%) : 매매가 하락 시 보증금 미반환 위험"
         badge_color = "error"
 
-    # 2. [요구사항 3] 월세 세액공제 계산 엔진
-    # 대상: 무주택자(기본 가정), 총급여 8,000만원 이하, 연간 월세액 한도 1,000만원
-    annual_rent_paid = monthly_rent * 12  # 연간 납부 월세액 (만원)
-    tax_credit_base = min(1000.0, float(annual_rent_paid))  # 1,000만원 한도
+    # 2. 월세 세액공제 계산
+    annual_rent_paid = monthly_rent * 12
+    tax_credit_base = min(1000.0, float(annual_rent_paid))
 
     if user_income <= 5500:
-        rent_tax_credit_rate = 0.17  # 17% 세액공제
+        rent_tax_credit_rate = 0.17
         annual_tax_refund = tax_credit_base * rent_tax_credit_rate
         tax_credit_desc = f"연봉 5,500만원 이하 (17% 공제율 적용) ➔ **연 {annual_tax_refund:.0f}만원 세금 환급**"
     elif user_income <= 8000:
-        rent_tax_credit_rate = 0.15  # 15% 세액공제
+        rent_tax_credit_rate = 0.15
         annual_tax_refund = tax_credit_base * rent_tax_credit_rate
         tax_credit_desc = f"연봉 5,500만~8,000만원 이하 (15% 공제율 적용) ➔ **연 {annual_tax_refund:.0f}만원 세금 환급**"
     else:
@@ -107,49 +123,108 @@ with tab1:
         annual_tax_refund = 0.0
         tax_credit_desc = "연봉 8,000만원 초과 (세액공제 대상 제외, 현금영수증 소득공제 가능)"
 
-    # 3. 정책 대출 룰베이스 엔진 (부산 우대금리 -0.2%p)
+    # 3. 정책 대출 룰베이스 엔진
     def evaluate_loans():
-        buy_loan = {"name": "시중 주담대", "rate": 3.8, "limit": buy_price * 0.7}
-        jeonse_loan = {"name": "시중 전세대출", "rate": 3.6, "limit": jeonse_price * 0.8}
+        buy_loan = {
+            "name": "시중 주담대", 
+            "rate": 3.8, 
+            "limit": buy_price * 0.7,
+            "reason": "소득 또는 순자산 기준이 기금 정책대출 요건을 초과하여 1금융권 시중 주담대(평균 3.8%)가 적용되었습니다."
+        }
+        jeonse_loan = {
+            "name": "시중 전세대출", 
+            "rate": 3.6, 
+            "limit": jeonse_price * 0.8,
+            "reason": "소득 또는 순자산 기준이 기금 정책대출 요건을 초과하여 1금융권 전세대출(평균 3.6%)이 적용되었습니다."
+        }
 
         if user_cash <= 51100 and buy_price <= 90000:
             if has_newborn and user_income <= 13000:
-                buy_loan = {"name": "신생아 특례 디딤돌", "rate": 1.8 - 0.2, "limit": 40000}
+                buy_loan = {
+                    "name": "신생아 특례 디딤돌",
+                    "rate": 1.8 - 0.2,
+                    "limit": 40000,
+                    "reason": "✅ [추천 근거] 2년 내 출산(입양) 무주택 가구 요건 충족!\n• 시중 주담대(3.8%) 대비 연 2.2%p 저렴하여 연간 막대한 이자 절감\n• 부산 소재 주택 지방우대금리(-0.2%p)가 자동 차감되어 최저 1.6%대 적용"
+                }
             elif is_married and user_income <= 8500 and buy_price <= 60000:
-                buy_loan = {"name": "신혼부부 디딤돌", "rate": 2.65 - 0.2, "limit": 32000}
+                buy_loan = {
+                    "name": "신혼부부 디딤돌",
+                    "rate": 2.65 - 0.2,
+                    "limit": 32000,
+                    "reason": "✅ [추천 근거] 혼인 7년 이내 신혼부부 및 소득 요건(8.5천 이하) 충족!\n• 시중 주담대(3.8%) 대비 연 1.35%p 저렴하여 매월 이자 부담 대폭 절감\n• 부산 소재 주택 지방우대금리(-0.2%p) 적용으로 2.45% 최적화"
+                }
             elif user_income <= 6000 and buy_price <= 50000:
-                buy_loan = {"name": "내집마련 디딤돌", "rate": 2.85 - 0.2, "limit": 20000}
+                buy_loan = {
+                    "name": "내집마련 디딤돌",
+                    "rate": 2.85 - 0.2,
+                    "limit": 20000,
+                    "reason": "✅ [추천 근거] 서민 무주택 세대주 및 소득 요건(6천 이하) 충족!\n• 정부 주택도시기금 지원 저금리로 시중은행 대비 연 1.15%p 이자 절약\n• 부산 소재 주택 지방우대금리(-0.2%p) 적용된 2.65% 우대금리"
+                }
 
         if user_cash <= 34500:
             if has_newborn and user_income <= 13000 and jeonse_price <= 40000:
-                jeonse_loan = {"name": "신생아 특례 버팀목", "rate": 1.3 - 0.2, "limit": 24000}
+                jeonse_loan = {
+                    "name": "신생아 특례 버팀목",
+                    "rate": 1.3 - 0.2,
+                    "limit": 24000,
+                    "reason": "✅ [추천 근거] 2년 내 출산 무주택 가구 특례 적용!\n• 시중 전세대출(3.6%) 대비 무려 2.5%p 저렴한 연 1.1%대 파격 금리\n• 부산(수도권 외) 보증금 4억원 한도 및 지방우대(-0.2%p) 반영"
+                }
             elif is_married and user_income <= 7500 and jeonse_price <= 30000:
-                jeonse_loan = {"name": "신혼부부 버팀목", "rate": 2.1 - 0.2, "limit": 16000}
+                jeonse_loan = {
+                    "name": "신혼부부 버팀목",
+                    "rate": 2.1 - 0.2,
+                    "limit": 16000,
+                    "reason": "✅ [추천 근거] 혼인 7년 이내 신혼부부 전세자금 지원 요건 충족!\n• 시중 전세대출 대비 연 1.7%p 낮은 1.9%대 초저금리 제공\n• 부산(수도권 외) 보증금 3억 이하 및 지방우대(-0.2%p) 반영"
+                }
             elif user_income <= 5000 and jeonse_price <= 20000:
-                jeonse_loan = {"name": "일반 버팀목전세", "rate": 2.5 - 0.2, "limit": 8000}
+                jeonse_loan = {
+                    "name": "일반 버팀목전세",
+                    "rate": 2.5 - 0.2,
+                    "limit": 8000,
+                    "reason": "✅ [추천 근거] 서민 근로자 전세자금 대출 요건 충족!\n• 시중 전세대출 대비 연 1.3%p 저렴하여 월 주거비 최소화\n• 부산 소재 주택 지방우대금리(-0.2%p) 자동 차감 반영"
+                }
 
         return buy_loan, jeonse_loan
 
     buy_loan, jeonse_loan = evaluate_loans()
 
-    # 4. 부대비용 및 자본배치
+    # 4. 부대비용 및 월 주거비/월 잉여투자액 산출
     acq_tax_rate = 0.011 if buy_price <= 60000 else (0.022 if buy_price <= 90000 else 0.033)
     buy_initial_costs = (buy_price * acq_tax_rate) + (buy_price * 0.004) + 80
     buy_annual_holding = (buy_price * 0.69 * 0.002) + 36
 
     buy_loan_amt = min(buy_loan["limit"], max(0, buy_price - user_cash))
     buy_annual_interest = buy_loan_amt * (buy_loan["rate"] / 100)
+    buy_monthly_cost = (buy_annual_interest + buy_annual_holding) / 12  # 매달 나가는 주거비용 (이자 + 보유세/건보)
+    buy_equity_used = buy_price - buy_loan_amt + buy_initial_costs
+    buy_free_cash = max(0, user_cash - buy_equity_used)                # 매매 후 남는 초기 목돈
 
     jeonse_loan_amt = min(jeonse_loan["limit"], max(0, jeonse_price - user_cash))
     jeonse_annual_interest = jeonse_loan_amt * (jeonse_loan["rate"] / 100)
+    jeonse_annual_guarantee = jeonse_price * 0.0012                     # HUG 보증료
+    jeonse_monthly_cost = (jeonse_annual_interest + jeonse_annual_guarantee) / 12
     jeonse_equity_used = jeonse_price - jeonse_loan_amt
-    jeonse_free_cash = max(0, user_cash - jeonse_equity_used)
+    jeonse_free_cash = max(0, user_cash - jeonse_equity_used)           # 전세 후 남는 초기 목돈
 
-    monthly_free_cash = max(0, user_cash - monthly_deposit)
-    # 실질 월세 지출 = 순수 월세액 - 연말정산 환급금
     effective_annual_rent = annual_rent_paid - annual_tax_refund
+    monthly_monthly_cost = effective_annual_rent / 12                  # 실질 월세 지출
+    monthly_free_cash = max(0, user_cash - monthly_deposit)            # 월세 후 남는 초기 목돈
 
-    # 5. 1~10년 타임라인 순자산 계산
+    # 매달 실제 투자에 투입되는 잉여 저축액
+    buy_monthly_invest = max(0.0, monthly_invest_budget - buy_monthly_cost)
+    jeonse_monthly_invest = max(0.0, monthly_invest_budget - jeonse_monthly_cost)
+    monthly_monthly_invest = max(0.0, monthly_invest_budget - monthly_monthly_cost)
+
+    # 5. 거치식(목돈) + 적립식(월저축) 복리 미래가치 함수
+    def calculate_total_investment_fv(initial_lump_sum, monthly_contribution, years_count):
+        lump_fv = initial_lump_sum * ((1 + after_tax_rate) ** years_count)
+        months_total = years_count * 12
+        if monthly_r > 0:
+            annuity_fv = monthly_contribution * (((1 + monthly_r) ** months_total - 1) / monthly_r)
+        else:
+            annuity_fv = monthly_contribution * months_total
+        return lump_fv + annuity_fv
+
     years = list(range(1, 11))
     buy_trajectory = []
     jeonse_trajectory = []
@@ -157,28 +232,23 @@ with tab1:
     bep_year = None
 
     for t in years:
-        # 매매 순자산
         future_val = buy_price * ((1 + price_growth_rate) ** t)
-        buy_nw = future_val - buy_loan_amt - buy_initial_costs - (buy_annual_interest + buy_annual_holding) * t
+        buy_invest_fv = calculate_total_investment_fv(buy_free_cash, buy_monthly_invest, t)
+        buy_nw = future_val - buy_loan_amt + buy_invest_fv
         buy_trajectory.append(buy_nw)
 
-        # 전세 순자산
-        jeonse_invest_fv = jeonse_free_cash * ((1 + after_tax_rate) ** t)
-        jeonse_guarantee = (jeonse_price * 0.0012) * t
-        jeonse_nw = jeonse_price + jeonse_invest_fv - jeonse_loan_amt - (jeonse_annual_interest * t) - jeonse_guarantee
+        jeonse_invest_fv = calculate_total_investment_fv(jeonse_free_cash, jeonse_monthly_invest, t)
+        jeonse_nw = jeonse_price - jeonse_loan_amt + jeonse_invest_fv
         jeonse_trajectory.append(jeonse_nw)
 
-        # 월세 순자산 (세액공제 환급액 반영된 실질 월세 차감)
-        monthly_invest_fv = monthly_free_cash * ((1 + after_tax_rate) ** t)
-        monthly_nw = monthly_deposit + monthly_invest_fv - (effective_annual_rent * t)
+        monthly_invest_fv = calculate_total_investment_fv(monthly_free_cash, monthly_monthly_invest, t)
+        monthly_nw = monthly_deposit + monthly_invest_fv
         monthly_trajectory.append(monthly_nw)
 
         if bep_year is None and buy_nw > max(jeonse_nw, monthly_nw):
             bep_year = t
 
-    # -------------------------------------------------------------
-    # 화면 표시 (배너 & 메트릭)
-    # -------------------------------------------------------------
+    # 6. 화면 표시
     if badge_color == "success":
         st.success(f"📍 **{district} 시세 분석 결과**: {risk_badge}")
     elif badge_color == "warning":
@@ -194,58 +264,97 @@ with tab1:
 
     if best_val == cur_buy:
         best_strategy = "매매 (자가 구입)"
-        strategy_msg = f"부동산 자산 상승분(연 {price_growth_rate*100:.1f}%)이 취득세 및 대출 이자를 상회하여 가장 많은 자산을 축적합니다."
+        strategy_msg = f"부동산 자산 상승분(연 {price_growth_rate*100:.1f}%)과 레버리지 효과가 매월 나가는 이자비용을 압도하여 가장 많은 자산을 축적합니다."
     elif best_val == cur_jeonse:
         best_strategy = "전세"
-        strategy_msg = f"저금리 기금 전세대출 레버리지와 잉여자본의 투자 복리 효과가 매매 부대비용 부담보다 안정적입니다."
+        strategy_msg = f"저금리 기금 전세대출로 주거비를 아끼고, 남은 월급(월 {jeonse_monthly_invest:.0f}만원)을 꾸준히 복리 투자한 결과가 가장 유리합니다."
     else:
         best_strategy = "월세"
-        strategy_msg = f"세액공제 환급 혜택과 목돈을 대체투자(세후 연 {after_tax_rate*100:.2f}%)로 굴린 복리 수익이 월세 지출을 압도합니다."
+        strategy_msg = f"보증금으로 묶이지 않은 거액의 목돈({monthly_free_cash/10000:.1f}억원)과 매월 남는 월급(월 {monthly_monthly_invest:.0f}만원)을 금융상품에 집중 투자(세후 연 {after_tax_rate*100:.2f}%)한 결과가 가장 우세합니다."
 
     st.subheader(f"🎯 {holding_years}년 거주 시 최적 선택: **'{best_strategy}'**")
     st.markdown(f"> {strategy_msg} (예상 최종 순자산: **{best_val/10000:.2f}억원**)")
 
-    # 3개 카드
+    # [핵심 설명팁 추가] 매월 현금흐름 & 적립식 투자 배분 안내 박스
+    st.markdown(f"""
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin: 15px 0;">
+        <h4 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b;">
+            💡 <strong>[적립식 복리 엔진 안내]</strong> 매월 저축 가능 예산 <strong>{monthly_invest_budget}만원</strong>은 이렇게 배분되어 굴러갑니다:
+        </h4>
+        <div style="display: flex; gap: 15px; font-size: 12px; color: #475569; flex-wrap: wrap;">
+            <div>🏠 <strong>매매</strong>: 주거비(이자+세금) <strong>{buy_monthly_cost:.0f}만</strong> 지출 ➔ <strong>남는 {buy_monthly_invest:.0f}만원/월</strong> 매달 복리투자</div>
+            <div>🔑 <strong>전세</strong>: 주거비(전세대출이자) <strong>{jeonse_monthly_cost:.0f}만</strong> 지출 ➔ <strong>남는 {jeonse_monthly_invest:.0f}만원/월</strong> 매달 복리투자</div>
+            <div>📄 <strong>월세</strong>: 실질 월세(세액공제 차감) <strong>{monthly_monthly_cost:.0f}만</strong> 지출 ➔ <strong>남는 {monthly_monthly_invest:.0f}만원/월</strong> 매달 복리투자</div>
+        </div>
+        <p style="margin: 6px 0 0 0; font-size: 11px; color: #64748b;">
+            * 매달 지출 후 남은 잉여 자금은 선택하신 투자 상품(세후 연 {after_tax_rate*100:.2f}%)에 매월 적립식 복리로 쌓여 최종 순자산에 가산됩니다.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 3개 비교 카드
     mcol1, mcol2, mcol3 = st.columns(3)
     with mcol1:
-        st.metric("🏠 매매 최종 자산", f"{cur_buy/10000:.2f} 억원", f"대출: {buy_loan['name']} ({buy_loan['rate']:.2f}%)")
+        st.metric(
+            label="🏠 매매 최종 자산", 
+            value=f"{cur_buy/10000:.2f} 억원", 
+            delta=f"대출: {buy_loan['name']} ({buy_loan['rate']:.2f}%)",
+            help=f"💡 [마우스 호버/클릭 시 상세 사유]\n\n{buy_loan['reason']}"
+        )
+        with st.popover("🔍 대출 추천 근거 및 비교 보기"):
+            st.markdown(f"**[{buy_loan['name']} 추천 사유]**")
+            st.info(buy_loan['reason'])
+            st.caption(f"• 시중 주담대 금리: 평균 3.80%\n• 추천 대출 금리: 연 {buy_loan['rate']:.2f}%\n• 연간 이자 차액 절감: 약 {buy_loan_amt * (0.038 - buy_loan['rate']/100):.0f}만원/년")
+
         st.caption(f"• 대출액: {buy_loan_amt/10000:.1f}억 (월이자 약 {buy_annual_interest/12:.0f}만원)")
-        st.caption(f"• 취득세/부대비용: 약 {buy_initial_costs:.0f}만원")
-        st.caption(f"• 월할 보유세/건보료: 월 약 {buy_annual_holding/12:.0f}만원")
+        st.caption(f"• 매월 주거비 지출: 월 약 {buy_monthly_cost:.0f}만원 (이자+세금)")
+        st.caption(f"• **월 잔여 적립투자금**: **월 {buy_monthly_invest:.0f}만원** (총 예산 {monthly_invest_budget}만 중)")
 
     with mcol2:
-        st.metric("🔑 전세 최종 자산", f"{cur_jeonse/10000:.2f} 억원", f"대출: {jeonse_loan['name']} ({jeonse_loan['rate']:.2f}%)")
+        st.metric(
+            label="🔑 전세 최종 자산", 
+            value=f"{cur_jeonse/10000:.2f} 억원", 
+            delta=f"대출: {jeonse_loan['name']} ({jeonse_loan['rate']:.2f}%)",
+            help=f"💡 [마우스 호버/클릭 시 상세 사유]\n\n{jeonse_loan['reason']}"
+        )
+        with st.popover("🔍 대출 추천 근거 및 비교 보기"):
+            st.markdown(f"**[{jeonse_loan['name']} 추천 사유]**")
+            st.info(jeonse_loan['reason'])
+            st.caption(f"• 시중 전세대출 금리: 평균 3.60%\n• 추천 대출 금리: 연 {jeonse_loan['rate']:.2f}%\n• 연간 이자 차액 절감: 약 {jeonse_loan_amt * (0.036 - jeonse_loan['rate']/100):.0f}만원/년")
+
         st.caption(f"• 대출액: {jeonse_loan_amt/10000:.1f}억 (월이자 약 {jeonse_annual_interest/12:.0f}만원)")
-        st.caption(f"• 투자 운용 여유자본: {jeonse_free_cash/10000:.1f}억원")
-        st.caption(f"• {holding_years}년 누적 투자수익: + {jeonse_free_cash * ((1 + after_tax_rate)**holding_years) - jeonse_free_cash:.0f}만원")
+        st.caption(f"• 초기 여유 목돈: {jeonse_free_cash/10000:.1f}억원")
+        st.caption(f"• **월 잔여 적립투자금**: **월 {jeonse_monthly_invest:.0f}만원** (총 예산 {monthly_invest_budget}만 중)")
 
     with mcol3:
-        st.metric("📄 월세 최종 자산", f"{cur_monthly/10000:.2f} 억원", "연말정산 세액공제 반영")
+        st.metric(
+            label="📄 월세 최종 자산", 
+            value=f"{cur_monthly/10000:.2f} 억원", 
+            delta="대출 불필요 (순수 투자 집중)",
+            help="보증금이 적어 대출이 필요 없으며, 남는 목돈 전액과 매달 아낀 대출이자 차액을 금융상품에 집중 투자합니다."
+        )
         st.caption(f"• {tax_credit_desc}")
-        st.caption(f"• 실질 월세 지출: 월 {effective_annual_rent/12:.0f}만원 (세액공제 차감 후)")
-        st.caption(f"• 투자 운용 여유자본: {monthly_free_cash/10000:.1f}억원")
-        st.caption(f"• {holding_years}년 누적 투자수익: + {monthly_free_cash * ((1 + after_tax_rate)**holding_years) - monthly_free_cash:.0f}만원")
+        st.caption(f"• 초기 여유 목돈: {monthly_free_cash/10000:.1f}억원")
+        st.caption(f"• **월 잔여 적립투자금**: **월 {monthly_monthly_invest:.0f}만원** (총 예산 {monthly_invest_budget}만 중)")
 
-    # -------------------------------------------------------------
-    # [요구사항 4] BEP 인터랙티브 차트 및 초보자용 친절 해설 가이드
-    # -------------------------------------------------------------
+    # 7. BEP 인터랙티브 차트
     st.markdown("---")
     st.subheader("📈 거주 기간별 손익분기점(BEP) 인터랙티브 차트")
 
-    # 초보자용 3초 요약 가이드 박스
     with st.expander("❓ **이 차트가 무엇을 의미하나요? (1분 이해 가이드 클릭)**", expanded=True):
-        st.markdown("""
+        st.markdown(f"""
         이 그래프는 **'지금 선택한 집에서 1년~10년 동안 살다가 이사 나갈 때, 내 손에 최종적으로 남는 통장 잔고(순자산)'**를 비교한 것입니다.
+        현재 매월 **{monthly_invest_budget}만원**의 저축 예산 중 주거비를 내고 남는 돈이 매달 금융상품(세후 연 {after_tax_rate*100:.2f}%)에 자동으로 적립식 투자됩니다.
         
         1. **🟦 파란색 선 (매매)**: 
-           - 처음 1~2년에는 **취득세, 중개수수료 등 목돈 비용** 때문에 가장 아래에서 시작합니다.
-           - 하지만 매달 내는 이자 외에 **'집값 상승분'**이 내 자산으로 누적되므로 시간이 지날수록 그래프가 가파르게 위로 올라갑니다.
+           - 처음 1~2년에는 **취득세, 중개수수료 등 목돈 비용**과 높은 대출이자 지출로 매월 투자할 수 있는 돈(월 {buy_monthly_invest:.0f}만원)이 가장 적어 낮게 시작합니다.
+           - 하지만 매달 집값이 연 {price_growth_rate*100:.1f}%씩 복리로 상승하므로 거주 기간이 길어질수록 자산 성장 속도가 가장 가파릅니다.
         2. **🟩 초록색 점선 (전세)**:
-           - 보증금을 안전하게 돌려받고, 매매 대비 아낀 목돈을 금융상품(예금/주식)에 투자해 굴린 결과입니다.
+           - 저금리 정책대출로 월 주거비를 아끼고 남는 목돈과 월급(월 {jeonse_monthly_invest:.0f}만원)을 꾸준히 적립식 투자한 결과입니다.
         3. **🟧 주황색 선 (월세)**:
-           - 보증금이 가장 적게 들기 때문에 **가장 큰 목돈을 주식/ETF에 투자**할 수 있지만, 매달 사라지는 월세 지출이 있습니다.
+           - 보증금이 가장 적게 들기 때문에 **가장 큰 목돈({monthly_free_cash/10000:.1f}억원)과 매월 남는 월급(월 {monthly_monthly_invest:.0f}만원)**을 금융상품에 굴려 자산을 불려 나갑니다.
         4. **⭐ 교차점 (골든크로스 / BEP)**:
-           - **파란색 선(매매)이 초록색/주황색 선을 뚫고 올라가는 순간**입니다! 즉, **"이 기간 이상 살 거면 무조건 집을 사는 게 돈을 번다"**는 손익분기점을 뜻합니다.
+           - **파란색 선(매매)이 초록색/주황색 선을 뚫고 올라가는 순간**입니다! 즉, **"이 기간 이상 살 거면 무조건 집을 사는 게 돈을 번다"**는 손익분기점입니다.
         """)
 
     fig = go.Figure()
@@ -278,7 +387,6 @@ with tab2:
     st.subheader("📊 부산 아파트 연도별 매매 & 전세 시세 트렌드 (2019 ~ 2026)")
     st.caption("공공 실거래가 통계 & 통계청 소비자물가지수(CPI) 기반 권역별 비교 분석")
 
-    # 1. 첨부파일(통계청 소비자물가상승률) 데이터 매핑 (2019 ~ 2026)
     cpi_inflation = {
         2019: 0.4,
         2020: 0.5,
@@ -287,11 +395,10 @@ with tab2:
         2023: 3.6,
         2024: 2.3,
         2025: 2.1,
-        2026: 2.0  # 한국은행 중장기 물가안정목표 전망치
+        2026: 2.0
     }
-    avg_inflation = np.mean(list(cpi_inflation.values()))  # 연평균 약 2.3%
+    avg_inflation = np.mean(list(cpi_inflation.values()))
 
-    # 부산 16개 구 주요 권역 연도별 평균 시세 데이터 (단위: 억원 / 전용 84㎡ 기준)
     trend_data = {
         "연도": [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026],
         "부산 전체 (매매)": [3.40, 4.20, 5.20, 4.70, 4.10, 4.35, 4.50, 4.62],
@@ -311,7 +418,6 @@ with tab2:
     }
     df_trend = pd.DataFrame(trend_data)
 
-    # 상단 물가상승률 지표 배너
     st.info(f"""
     📈 **대한민국 통계청 기준 연평균 소비자물가상승률**: **연 약 {avg_inflation:.1f}%** 
     (2019년 0.4% ➔ 2022년 고물가 5.1% ➔ 2025년 2.1% 안정세)  
@@ -335,7 +441,6 @@ with tab2:
         buy_col = f"{selected_region} (매매)"
         jeonse_col = f"{selected_region} (전세)"
 
-        # 그래프 생성
         fig_trend = go.Figure()
         fig_trend.add_trace(go.Scatter(
             x=df_trend["연도"], 
@@ -365,9 +470,6 @@ with tab2:
         )
         st.plotly_chart(fig_trend, use_container_width=True)
 
-    # -------------------------------------------------------------
-    # 연도별 상세 수치 데이터표 (물가상승률 컬럼 추가)
-    # -------------------------------------------------------------
     st.markdown("---")
     st.subheader(f"📋 {selected_region} 연도별 시세 · 증감률 · 소비자물가상승률(CPI) 비교표")
 
@@ -405,4 +507,3 @@ with tab2:
 
     df_display = pd.DataFrame(display_rows)
     st.dataframe(df_display, use_container_width=True, hide_index=True)
-
