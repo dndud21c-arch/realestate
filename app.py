@@ -36,7 +36,7 @@ with st.sidebar:
     st.markdown("---")
     st.header("2. 내 자산 및 조건")
     user_cash = st.number_input("보유 순자산 (만원)", value=5000, step=1000)
-    user_income = st.number_input("연봉 / 총급여 (만원)", value=3600, step=500, help="월세 세액공제(8,000만원 이하) 판정에 사용됩니다.")
+    user_income = st.number_input("연봉 / 총급여 (만원)", value=4000, step=500, help="월세 세액공제(8,000만원 이하) 판정에 사용됩니다.")
     
     is_married = st.checkbox("신혼부부 (혼인 7년 이내)", value=False)
     has_newborn = st.checkbox("신생아 출산/입양 (2년 이내)", value=False)
@@ -120,14 +120,18 @@ with tab1:
         annual_tax_refund = 0.0
         tax_credit_desc = "연봉 8,000만원 초과 (세액공제 대상 제외, 현금영수증 소득공제 가능)"
 
-    # 3. 매수 초기 부대비용 계산
+    # 3. 매수 초기 부대비용 계산 (취득세 1.1% + 중개수수료 0.4% + 등기법무사 80만)
     acq_tax_rate = 0.011 if buy_price <= 60000 else (0.022 if buy_price <= 90000 else 0.033)
     buy_initial_costs = (buy_price * acq_tax_rate) + (buy_price * 0.004) + 80
-    buy_total_required = buy_price + buy_initial_costs
+    buy_total_required = buy_price + buy_initial_costs  # 매매에 필요한 총 금액
     buy_annual_holding = (buy_price * 0.69 * 0.002) + 36
 
-    # 4. 현실적 대출 한도 검증 및 매매/전세 실행 가능성 판정
+    # -------------------------------------------------------------
+    # 4. [핵심 로직] 현실적 대출 한도 검증 및 매매/전세 실행 가능성 판정
+    # -------------------------------------------------------------
     def evaluate_realistic_loans():
+        # [매매 대출 판별]
+        # 1단계: 기금 정책대출 자격 확인
         policy_buy = None
         if user_cash <= 51100 and buy_price <= 90000:
             if has_newborn and user_income <= 13000:
@@ -137,33 +141,38 @@ with tab1:
             elif user_income <= 6000 and buy_price <= 50000:
                 policy_buy = {"name": "내집마련 디딤돌", "rate": 2.65, "limit": 20000}
 
+        # 시중은행 주담대 한도 (LTV 70%, 생초 80%)
         commercial_ltv = 0.8 if is_first_buyer else 0.7
         commercial_buy_limit = buy_price * commercial_ltv
         commercial_buy = {"name": f"시중 주담대 (LTV {int(commercial_ltv*100)}%)", "rate": 3.8, "limit": commercial_buy_limit}
 
+        # 매매 가능 여부 및 최종 대출 결정
         is_buy_possible = True
         buy_shortfall = 0
         final_buy_loan = None
 
         if policy_buy and (user_cash + policy_buy["limit"] >= buy_total_required):
+            # 정책대출 한도로 매매 가능
             final_buy_loan = policy_buy
             final_buy_loan["reason"] = f"✅ 정부 주택도시기금 정책대출 요건 충족 및 자본금 충족으로 저금리({policy_buy['rate']}%) 적용"
             final_buy_loan_amt = buy_total_required - user_cash
         elif user_cash + commercial_buy_limit >= buy_total_required:
+            # 정책대출로는 부족하지만 시중대출로 전환하면 매매 가능!
             final_buy_loan = commercial_buy
             if policy_buy:
-                final_buy_loan["reason"] = f"⚠️ 디딤돌 대출 한도({policy_buy['limit']/10000:.1f}억원)로는 잔금이 부족하여 시중 주담대(최대 {commercial_buy_limit/10000:.1f}억원)로 자동 전환되었습니다."
+                final_buy_loan["reason"] = f"⚠️ 디딤돌 대출 한도({policy_buy['limit']/10000:.1f}억원)로는 잔금이 부족하여, 한도가 더 높은 시중 주담대(최대 {commercial_buy_limit/10000:.1f}억원)로 자동 전환되었습니다."
             else:
                 final_buy_loan["reason"] = f"기금 정책대출 요건 미달로 시중은행 주담대(최대 {commercial_buy_limit/10000:.1f}억원, LTV {int(commercial_ltv*100)}%)가 적용되었습니다."
             final_buy_loan_amt = buy_total_required - user_cash
         else:
+            # 시중대출 최대치(LTV 70~80%)를 받아도 잔금이 부족하여 매매 불가!
             is_buy_possible = False
             buy_shortfall = buy_total_required - (user_cash + commercial_buy_limit)
             final_buy_loan = commercial_buy
             final_buy_loan["reason"] = f"❌ [매매 불가] 보유자산({user_cash/10000:.2f}억원)과 시중은행 최대 대출({commercial_buy_limit/10000:.2f}억원)을 합쳐도 총 매수자금({buy_total_required/10000:.2f}억원)에 미치지 못합니다."
             final_buy_loan_amt = commercial_buy_limit
 
-        # 전세
+        # [전세 대출 판별]
         policy_jeonse = None
         if user_cash <= 34500:
             if has_newborn and user_income <= 13000 and jeonse_price <= 40000:
@@ -218,7 +227,7 @@ with tab1:
     jeonse_monthly_invest = max(0.0, monthly_invest_budget - jeonse_monthly_cost)
     monthly_monthly_invest = max(0.0, monthly_invest_budget - monthly_monthly_cost)
 
-    # 6. 복리 미래가치 함수 (최종 불어난 돈 total_fv)
+    # 6. 복리 미래가치 함수 (거치식 + 적립식 + 환급금 재투자)
     def calculate_investment_details(initial_lump_sum, monthly_contribution, years_count, annual_extra_cash=0.0):
         lump_fv = initial_lump_sum * ((1 + after_tax_rate) ** years_count)
         months_total = years_count * 12
@@ -244,74 +253,58 @@ with tab1:
     jeonse_trajectory = []
     monthly_trajectory = []
     
-    # [수정] 최종 불어난 투자 평가액 저장
-    buy_fvs = []
-    jeonse_fvs = []
-    monthly_fvs = []
-
-    # [수정] 누적 주거비 저장
-    buy_cum_costs = []
-    jeonse_cum_costs = []
-    monthly_cum_costs = []
-
+    buy_gains = []
+    jeonse_gains = []
+    monthly_gains = []
     bep_year = None
 
     for t in years:
-        # 1) 매매
+        # 매매
         if is_buy_possible:
             future_val = buy_price * ((1 + price_growth_rate) ** t)
             buy_fv, buy_princ, buy_gain = calculate_investment_details(buy_free_cash, buy_monthly_invest, t, 0.0)
             buy_nw = future_val - buy_loan_amt + buy_fv
-            b_cost = buy_monthly_cost * 12 * t
         else:
-            buy_nw = None
-            buy_fv = 0
-            b_cost = 0
+            buy_nw = None  # 매매 불가
+            buy_gain = 0
         buy_trajectory.append(buy_nw)
-        buy_fvs.append(buy_fv)
-        buy_cum_costs.append(b_cost)
+        buy_gains.append(buy_gain)
 
-        # 2) 전세
+        # 전세
         if is_jeonse_possible:
             jeonse_fv, jeonse_princ, jeonse_gain = calculate_investment_details(jeonse_free_cash, jeonse_monthly_invest, t, 0.0)
-            jeonse_nw = (jeonse_price - jeonse_loan_amt) + jeonse_fv
-            j_cost = jeonse_monthly_cost * 12 * t
+            jeonse_nw = jeonse_price - jeonse_loan_amt + jeonse_fv
         else:
             jeonse_nw = None
-            jeonse_fv = 0
-            j_cost = 0
+            jeonse_gain = 0
         jeonse_trajectory.append(jeonse_nw)
-        jeonse_fvs.append(jeonse_fv)
-        jeonse_cum_costs.append(j_cost)
+        jeonse_gains.append(jeonse_gain)
 
-        # 3) 월세 (매년 환급금 annual_tax_refund 재투자 적용)
+        # 월세
         monthly_fv, monthly_princ, monthly_gain = calculate_investment_details(monthly_free_cash, monthly_monthly_invest, t, annual_tax_refund)
         monthly_nw = monthly_deposit + monthly_fv
-        m_cost = (monthly_monthly_cost * 12 * t) - (annual_tax_refund * t)  # 실질 누적 월세비용
         monthly_trajectory.append(monthly_nw)
-        monthly_fvs.append(monthly_fv)
-        monthly_cum_costs.append(m_cost)
+        monthly_gains.append(monthly_gain)
 
+        # BEP 골든크로스 판별 (매매가 가능한 경우에만 판정)
         if is_buy_possible and bep_year is None:
             comp_targets = [v for v in [jeonse_nw, monthly_nw] if v is not None]
             if comp_targets and buy_nw > max(comp_targets):
                 bep_year = t
 
+    # -------------------------------------------------------------
     # 7. 최적 전략 도출 및 화면 배너
+    # -------------------------------------------------------------
     cur_idx = holding_years - 1
     cur_buy = buy_trajectory[cur_idx]
     cur_jeonse = jeonse_trajectory[cur_idx]
     cur_monthly = monthly_trajectory[cur_idx]
 
-    # 현재 거주기간의 최종 불어난 투자금 & 누적 주거비
-    cur_buy_fv = buy_fvs[cur_idx]
-    cur_jeonse_fv = jeonse_fvs[cur_idx]
-    cur_monthly_fv = monthly_fvs[cur_idx]
+    cur_buy_gain = buy_gains[cur_idx]
+    cur_jeonse_gain = jeonse_gains[cur_idx]
+    cur_monthly_gain = monthly_gains[cur_idx]
 
-    cur_buy_cost = buy_cum_costs[cur_idx]
-    cur_jeonse_cost = jeonse_cum_costs[cur_idx]
-    cur_monthly_cost = monthly_cum_costs[cur_idx]
-
+    # 실행 가능한 옵션 중에서만 최적 선택!
     valid_options = {}
     if is_buy_possible:
         valid_options["매매"] = cur_buy
@@ -338,6 +331,7 @@ with tab1:
         else:
             strategy_msg = f"목돈과 매년 환급받는 월세 세액공제금을 금융상품에 집중 복리 투자한 결과가 가장 우세합니다."
 
+    # 상단 깡통전세 알림
     if badge_color == "success":
         st.success(f"📍 **{district} 시세 분석 결과**: {risk_badge}")
     elif badge_color == "warning":
@@ -345,6 +339,7 @@ with tab1:
     else:
         st.error(f"📍 **{district} 시세 분석 결과**: {risk_badge}")
 
+    # 최종 추천 결과 헤더
     st.subheader(f"🎯 {holding_years}년 거주 시 최적 선택: **'{best_strategy}'**")
     st.markdown(f"> {strategy_msg} (예상 최종 순자산: **{best_val/10000:.2f}억원**)")
 
@@ -363,7 +358,7 @@ with tab1:
     """, unsafe_allow_html=True)
 
     # -------------------------------------------------------------
-    # 8. [요구사항 반영] 3개 비교 카드 (최종 불어난 돈 & 누적 주거비 표기)
+    # 8. 3개 비교 카드 (매매 불가 상태 완벽 대응)
     # -------------------------------------------------------------
     mcol1, mcol2, mcol3 = st.columns(3)
     
@@ -380,8 +375,8 @@ with tab1:
                 st.markdown(f"**[{buy_loan['name']} 추천 사유]**")
                 st.info(buy_loan['reason'])
             st.caption(f"• 대출액: {buy_loan_amt/10000:.1f}억 (월이자 약 {buy_annual_interest/12:.0f}만원)")
-            st.caption(f"• **{holding_years}년 불어난 총 투자자산**: :green[**약 {cur_buy_fv:.0f}만원**]")
-            st.caption(f"• **{holding_years}년 누적 총 주거비**: :red[**약 {cur_buy_cost:.0f}만원**] (이자+보유세)")
+            st.caption(f"• 매월 주거비 지출: 월 약 {buy_monthly_cost:.0f}만원 (이자+세금)")
+            st.caption(f"• **{holding_years}년 누적 투자수익**: :green[**+ {cur_buy_gain:.0f}만원**]")
         else:
             st.metric(
                 label="🏠 매매 (자가 구입)",
@@ -410,17 +405,14 @@ with tab1:
                 label="🔑 전세 최종 자산", 
                 value=f"{cur_jeonse/10000:.2f} 억원", 
                 delta=f"대출: {jeonse_loan['name']} ({jeonse_loan['rate']:.2f}%)",
-                help=f"💡 [최종 자산 계산 공식]\n\n돌려받는 보증금({(jeonse_price - jeonse_loan_amt)/10000:.2f}억) + 불어난 투자자산({cur_jeonse_fv/10000:.2f}억) = {cur_jeonse/10000:.2f}억원"
+                help=jeonse_loan['reason']
             )
             with st.popover("🔍 대출 추천 근거 및 비교 보기"):
                 st.markdown(f"**[{jeonse_loan['name']} 추천 사유]**")
                 st.info(jeonse_loan['reason'])
-                st.caption(f"• 시중 전세대출 금리: 평균 3.60%\n• 추천 대출 금리: 연 {jeonse_loan['rate']:.2f}%\n• 연간 이자 차액 절감: 약 {jeonse_loan_amt * (0.036 - jeonse_loan['rate']/100):.0f}만원/년")
-
-            st.caption(f"• 대출액: {jeonse_loan_amt/10000:.1f}억 (내 보증금 {(jeonse_price - jeonse_loan_amt)/10000:.2f}억)")
-            # [수정] 최종 불어난 투자 평가액 및 누적 주거비
-            st.caption(f"• **{holding_years}년 불어난 총 투자자산**: :green[**약 {cur_jeonse_fv:.0f}만원**] (원금+수익)")
-            st.caption(f"• **{holding_years}년 누적 총 주거비**: :red[**약 {cur_jeonse_cost:.0f}만원**] (이자+보증료)")
+            st.caption(f"• 대출액: {jeonse_loan_amt/10000:.1f}억 (월이자 약 {jeonse_annual_interest/12:.0f}만원)")
+            st.caption(f"• 초기 여유 목돈: {jeonse_free_cash/10000:.1f}억원")
+            st.caption(f"• **{holding_years}년 누적 투자수익**: :green[**+ {cur_jeonse_gain:.0f}만원**]")
         else:
             st.metric(
                 label="🔑 전세",
@@ -437,15 +429,15 @@ with tab1:
             label="📄 월세 최종 자산", 
             value=f"{cur_monthly/10000:.2f} 억원", 
             delta="대출 불필요 (순수 투자 집중)",
-            help=f"💡 [최종 자산 계산 공식]\n\n돌려받는 보증금({monthly_deposit/10000:.2f}억) + 불어난 투자자산({cur_monthly_fv/10000:.2f}억) = {cur_monthly/10000:.2f}억원"
+            help="보증금이 적어 대출이 필요 없으며, 남는 목돈 전액과 매달 아낀 대출이자 차액을 금융상품에 집중 투자합니다."
         )
         st.caption(f"• {tax_credit_desc}")
-        st.caption(f"• 보증금 {monthly_deposit/10000:.2f}억 (이사 갈 때 100% 환급)")
-        # [수정] 최종 불어난 투자 평가액 및 누적 주거비
-        st.caption(f"• **{holding_years}년 불어난 총 투자자산**: :green[**약 {cur_monthly_fv:.0f}만원**] (환급금 재투자 포함)")
-        st.caption(f"• **{holding_years}년 누적 실질 주거비**: :red[**약 {cur_monthly_cost:.0f}만원**] (월세-환급금)")
+        st.caption(f"• 초기 여유 목돈: {monthly_free_cash/10000:.1f}억원 (보증금 제외 전액투자)")
+        st.caption(f"• **{holding_years}년 누적 투자수익**: :green[**+ {cur_monthly_gain:.0f}만원**] (환급금 재투자 반영)")
 
+    # -------------------------------------------------------------
     # 9. BEP 인터랙티브 차트
+    # -------------------------------------------------------------
     st.markdown("---")
     st.subheader("📈 거주 기간별 손익분기점(BEP) 인터랙티브 차트")
 
@@ -461,6 +453,7 @@ with tab1:
     if is_buy_possible:
         fig.add_trace(go.Scatter(x=years, y=buy_trajectory, mode='lines+markers', name='매매(자가)', line=dict(color='#4f46e5', width=3)))
     else:
+        # 매매 불가능한 경우 흐린 점선으로 참고용 표시
         fig.add_trace(go.Scatter(
             x=years, 
             y=[buy_price * ((1 + price_growth_rate) ** t) - (buy_total_required - user_cash) for t in years],
