@@ -298,7 +298,7 @@ with tab2:
     }
     df_trend = pd.DataFrame(trend_data)
 
-    col_t1, col_t2 = st.columns()
+    col_t1, col_t2 = st.columns(2)
     with col_t1:
         selected_region = st.selectbox(
             "트렌드 조회 지역",
