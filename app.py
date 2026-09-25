@@ -318,7 +318,7 @@ with tab2:
     👉 **부동산 매매가 상승률이 물가상승률({avg_inflation:.1f}%)보다 높다면**, 화폐가치 하락을 방어하고 실질 자산을 불린 것입니다.
     """)
 
-    col_t1, col_t2 = st.columns()
+    col_t1, col_t2 = st.columns(2)
     with col_t1:
         selected_region = st.selectbox(
             "트렌드 조회 지역",
