@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("🏠 부산 부동산 실질 주거비 & 자산 성장 시뮬레이터")
-st.caption("기회비용 · 숨은 부대비용 · 정책대출/시중대출 LTV 자격 검증 · 월 적립식 복리투자 엔진")
+st.caption("기회비용 · 숨은 부대비용 · 청년/신혼 정책대출 룰셋 · LTV 자격 검증 · 월 적립식 복리투자 엔진")
 
 # -----------------------------------------------------------------------------
 # 사이드바: 입력 제어 패널
@@ -30,14 +30,16 @@ with st.sidebar:
         buy_price = st.number_input("매매 시세 (만원)", value=50000, step=1000)
         monthly_deposit = st.number_input("월세 보증금 (만원)", value=2000, step=500)
     with col2:
-        jeonse_price = st.number_input("전세 보증금 (만원)", value=22000, step=1000)
+        jeonse_price = st.number_input("전세 보증금 (만원)", value=19000, step=1000)
         monthly_rent = st.number_input("월세액 (만원/월)", value=95, step=5)
 
     st.markdown("---")
     st.header("2. 내 자산 및 조건")
-    user_cash = st.number_input("보유 순자산 (만원)", value=5000, step=1000)
-    user_income = st.number_input("연봉 / 총급여 (만원)", value=4000, step=500, help="월세 세액공제(8,000만원 이하) 판정에 사용됩니다.")
+    user_cash = st.number_input("보유 순자산 (만원)", value=4000, step=1000)
+    user_income = st.number_input("연봉 / 총급여 (만원)", value=4000, step=500, help="월세 세액공제 및 정책대출 소득 심사에 사용됩니다.")
     
+    # [추가] 청년 여부 체크박스
+    is_youth = st.checkbox("만 19세 ~ 34세 청년", value=True, help="청년전용 버팀목 전세자금(최대 1.5억원 한도) 지원 대상 여부입니다.")
     is_married = st.checkbox("신혼부부 (혼인 7년 이내)", value=False)
     has_newborn = st.checkbox("신생아 출산/입양 (2년 이내)", value=False)
     is_first_buyer = st.checkbox("생애최초 주택구입", value=False)
@@ -126,8 +128,11 @@ with tab1:
     buy_total_required = buy_price + buy_initial_costs
     buy_annual_holding = (buy_price * 0.69 * 0.002) + 36
 
-    # 4. 현실적 대출 한도 검증 및 매매/전세 실행 가능성 판정
+    # -------------------------------------------------------------
+    # 4. 현실적 대출 한도 검증 (청년전용 버팀목 탑재)
+    # -------------------------------------------------------------
     def evaluate_realistic_loans():
+        # [매매 대출]
         policy_buy = None
         if user_cash <= 51100 and buy_price <= 90000:
             if has_newborn and user_income <= 13000:
@@ -163,15 +168,39 @@ with tab1:
             final_buy_loan["reason"] = f"❌ [매매 불가] 보유자산({user_cash/10000:.2f}억원)과 시중은행 최대 대출({commercial_buy_limit/10000:.2f}억원)을 합쳐도 총 매수자금({buy_total_required/10000:.2f}억원)에 미치지 못합니다."
             final_buy_loan_amt = commercial_buy_limit
 
-        # 전세
+        # [전세 대출] - 신생아 -> 청년 -> 신혼 -> 일반 순서 평가
         policy_jeonse = None
         if user_cash <= 34500:
             if has_newborn and user_income <= 13000 and jeonse_price <= 40000:
-                policy_jeonse = {"name": "신생아 특례 버팀목", "rate": 1.1, "limit": 24000}
+                policy_jeonse = {
+                    "name": "신생아 특례 버팀목", 
+                    "rate": 1.1, 
+                    "limit": min(24000, jeonse_price * 0.8),
+                    "reason_text": "신생아 출산 가구 특례로 연 1.1%대 초저금리가 적용되었습니다."
+                }
+            elif is_youth and user_income <= 5000 and jeonse_price <= 30000:
+                # [청년전용 버팀목] 최대 1.5억원 (보증금 80% 이내), 금리 2.0% (지방우대 0.2%p 차감 반영)
+                youth_limit = min(15000, jeonse_price * 0.8)
+                policy_jeonse = {
+                    "name": "청년전용 버팀목", 
+                    "rate": 2.0, 
+                    "limit": youth_limit,
+                    "reason_text": "만 19~34세 청년 요건(소득 5천 이하, 보증금 3억 이하) 충족! 최대 1.5억원까지 연 2.0% 초저금리가 적용되었습니다."
+                }
             elif is_married and user_income <= 7500 and jeonse_price <= 30000:
-                policy_jeonse = {"name": "신혼부부 버팀목", "rate": 1.9, "limit": 16000}
+                policy_jeonse = {
+                    "name": "신혼부부 버팀목", 
+                    "rate": 1.9, 
+                    "limit": min(16000, jeonse_price * 0.8),
+                    "reason_text": "혼인 7년 이내 신혼부부 전세자금 지원으로 연 1.9% 우대금리가 적용되었습니다."
+                }
             elif user_income <= 5000 and jeonse_price <= 20000:
-                policy_jeonse = {"name": "일반 버팀목전세", "rate": 2.3, "limit": 8000}
+                policy_jeonse = {
+                    "name": "일반 버팀목전세", 
+                    "rate": 2.3, 
+                    "limit": min(8000, jeonse_price * 0.7),
+                    "reason_text": "서민 근로자 전세자금 대출(지방 한도 8천만원)이 적용되었습니다."
+                }
 
         commercial_jeonse_limit = jeonse_price * 0.8
         commercial_jeonse = {"name": "시중 전세대출 (보증금 80%)", "rate": 3.6, "limit": commercial_jeonse_limit}
@@ -182,11 +211,14 @@ with tab1:
 
         if policy_jeonse and (user_cash + policy_jeonse["limit"] >= jeonse_price):
             final_jeonse_loan = policy_jeonse
-            final_jeonse_loan["reason"] = f"✅ 주택도시기금 버팀목 정책대출 요건 충족 및 자본금 충족으로 저금리({policy_jeonse['rate']}%) 적용"
-            final_jeonse_loan_amt = min(jeonse_price * 0.8, max(0, jeonse_price - user_cash))
+            final_jeonse_loan["reason"] = f"✅ [정부 정책대출 매칭] {policy_jeonse['reason_text']}"
+            final_jeonse_loan_amt = max(0, jeonse_price - user_cash)
         elif user_cash + commercial_jeonse_limit >= jeonse_price:
             final_jeonse_loan = commercial_jeonse
-            final_jeonse_loan["reason"] = "버팀목 한도 초과 또는 자격 미달로 시중은행 전세대출(보증금 80% 한도)로 전환되었습니다."
+            if policy_jeonse:
+                final_jeonse_loan["reason"] = f"⚠️ 정부 대출({policy_jeonse['name']}, 한도 {policy_jeonse['limit']/10000:.1f}억원)로는 잔금이 부족하여, 한도가 더 높은 시중은행 전세대출(보증금 80% = {commercial_jeonse_limit/10000:.1f}억원)로 전환되었습니다."
+            else:
+                final_jeonse_loan["reason"] = "버팀목 자격 요건(소득/자산/연령) 미달로 시중은행 전세대출(보증금 80% 한도)이 적용되었습니다."
             final_jeonse_loan_amt = max(0, jeonse_price - user_cash)
         else:
             is_jeonse_possible = False
@@ -218,7 +250,7 @@ with tab1:
     jeonse_monthly_invest = max(0.0, monthly_invest_budget - jeonse_monthly_cost)
     monthly_monthly_invest = max(0.0, monthly_invest_budget - monthly_monthly_cost)
 
-    # 6. 복리 미래가치 함수 (최종 불어난 총 평가액 반환)
+    # 6. 복리 미래가치 함수
     def calculate_investment_details(initial_lump_sum, monthly_contribution, years_count, annual_extra_cash=0.0):
         lump_fv = initial_lump_sum * ((1 + after_tax_rate) ** years_count)
         months_total = years_count * 12
@@ -238,7 +270,6 @@ with tab1:
         pure_gain = total_fv - total_principal
         return total_fv, total_principal, pure_gain
 
-    # 1~10년 타임라인 순자산 계산
     years = list(range(1, 11))
     buy_trajectory = []
     jeonse_trajectory = []
@@ -282,7 +313,7 @@ with tab1:
         jeonse_fvs.append(jeonse_fv)
         jeonse_cum_costs.append(j_cost)
 
-        # 월세 (매년 세액공제 환급금 annual_tax_refund 재투자 적용)
+        # 월세
         monthly_fv, monthly_princ, monthly_gain = calculate_investment_details(monthly_free_cash, monthly_monthly_invest, t, annual_tax_refund)
         monthly_nw = monthly_deposit + monthly_fv
         m_cost = (monthly_monthly_cost * 12 * t) - (annual_tax_refund * t)
@@ -325,7 +356,7 @@ with tab1:
     elif best_key == "전세":
         best_strategy = "전세"
         if not is_buy_possible:
-            strategy_msg = f"⚠️ 현재 자본금으로는 매매가 불가능하여, 실행 가능한 대안 중 저금리 전세대출과 월 잉여금 복리 투자가 가장 유리합니다."
+            strategy_msg = f"⚠️ 현재 자본금으로는 매매가 불가능하여, 실행 가능한 대안 중 저금리 전세대출({jeonse_loan['name']} {jeonse_loan['rate']}%)과 월 잉여금 복리 투자가 가장 유리합니다."
         else:
             strategy_msg = f"저금리 전세대출로 주거비를 아끼고 남은 월급을 꾸준히 복리 투자한 결과가 가장 유리합니다."
     else:
@@ -360,7 +391,7 @@ with tab1:
     """, unsafe_allow_html=True)
 
     # -------------------------------------------------------------
-    # 8. [요구사항 반영] 3개 비교 카드 & 최종 자산 산출 공식 알림문구
+    # 8. 3개 비교 카드
     # -------------------------------------------------------------
     mcol1, mcol2, mcol3 = st.columns(3)
     
@@ -379,7 +410,6 @@ with tab1:
             st.caption(f"• 대출액: {buy_loan_amt/10000:.1f}억 (월이자 약 {buy_annual_interest/12:.0f}만원)")
             st.caption(f"• **{holding_years}년 불어난 총 투자자산**: :green[**약 {cur_buy_fv:.0f}만원**]")
             st.caption(f"• **{holding_years}년 누적 총 주거비**: :red[**약 {cur_buy_cost:.0f}만원**] (이자+보유세)")
-            # 산출 공식 알림문구
             future_prop_cur = buy_price * ((1 + price_growth_rate) ** holding_years)
             st.info(f"💡 **최종자산 산출 공식**\n\n미래 집값({future_prop_cur/10000:.2f}억) - 대출상환({buy_loan_amt/10000:.2f}억) + 불어난 투자자산({cur_buy_fv/10000:.2f}억) = **최종 자산 {cur_buy/10000:.2f}억원**")
         else:
@@ -418,11 +448,10 @@ with tab1:
                 st.info(jeonse_loan['reason'])
                 st.caption(f"• 시중 전세대출 금리: 평균 3.60%\n• 추천 대출 금리: 연 {jeonse_loan['rate']:.2f}%\n• 연간 이자 차액 절감: 약 {jeonse_loan_amt * (0.036 - jeonse_loan['rate']/100):.0f}만원/년")
 
-            my_jeonse_deposit = (jeonse_price - jeonse_loan_amt)  # 내 돈 들어간 보증금
+            my_jeonse_deposit = (jeonse_price - jeonse_loan_amt)
             st.caption(f"• 대출액: {jeonse_loan_amt/10000:.1f}억 (내 보증금 {my_jeonse_deposit/10000:.2f}억)")
             st.caption(f"• **{holding_years}년 불어난 총 투자자산**: :green[**약 {cur_jeonse_fv:.0f}만원**] (원금+수익)")
             st.caption(f"• **{holding_years}년 누적 총 주거비**: :red[**약 {cur_jeonse_cost:.0f}만원**] (이자+보증료)")
-            # [요구사항 반영] 산출 공식 알림문구
             st.info(f"💡 **최종자산 산출 공식**\n\n돌려받는 내 보증금({my_jeonse_deposit/10000:.2f}억원) + 최종 불어난 투자자산({cur_jeonse_fv/10000:.2f}억원) = **최종 자산 {cur_jeonse/10000:.2f}억원**")
         else:
             st.metric(
@@ -441,12 +470,12 @@ with tab1:
             label="📄 월세 최종 자산", 
             value=f"{cur_monthly/10000:.2f} 억원", 
             delta="대출 불필요 (순수 투자 집중)",
-            help="보증금이 적어 대출이 필요 없으며, 남는 목돈 전액과 매달 아낀 대출이자 차액을 금융상품에 집중 투자합니다."
+            help=f"💡 [최종 자산 계산 공식]\n\n돌려받는 보증금({monthly_deposit/10000:.2f}억) + 불어난 투자자산({cur_monthly_fv/10000:.2f}억) = {cur_monthly/10000:.2f}억원"
         )
         st.caption(f"• {tax_credit_desc}")
+        st.caption(f"• 보증금 {monthly_deposit/10000:.2f}억 (이사 갈 때 100% 환급)")
         st.caption(f"• **{holding_years}년 불어난 총 투자자산**: :green[**약 {cur_monthly_fv:.0f}만원**] (환급금 재투자 포함)")
         st.caption(f"• **{holding_years}년 누적 실질 주거비**: :red[**약 {cur_monthly_cost:.0f}만원**] (월세-환급금)")
-        # [요구사항 반영] 산출 공식 알림문구
         st.info(f"💡 **최종자산 산출 공식**\n\n돌려받는 보증금({monthly_deposit/10000:.2f}억원) + 최종 불어난 투자자산({cur_monthly_fv/10000:.2f}억원) = **최종 자산 {cur_monthly/10000:.2f}억원**")
 
     # 9. BEP 인터랙티브 차트
