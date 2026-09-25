@@ -45,7 +45,6 @@ with st.sidebar:
     st.markdown("---")
     st.header("3. 대체투자 기회비용 엔진")
     
-    # [설명팁 적용] 매월 저축/투자 가용 예산 입력
     monthly_invest_budget = st.number_input(
         "매월 저축/투자 가능 예산 (만원/월)", 
         value=150, 
@@ -54,14 +53,12 @@ with st.sidebar:
         help="월급 중 주거비(이자/월세) 지출 및 금융투자에 투입할 수 있는 총 가용 자금입니다."
     )
     
-    # 사이드바 설명 팁 아코디언
     with st.expander("💡 **적립식 복리 엔진이란? (원리 보기)**"):
         st.markdown(f"""
         **Q. 어떻게 적용되나요?**
         - 매달 월급에서 모으는 **{monthly_invest_budget}만원** 중, 각 주거방식의 **월 주거비(대출이자/월세)를 먼저 지출**합니다.
         - **지출하고 남은 잔여 월급**이 매달 주식/ETF/예적금에 **자동으로 적립식 복리 투자**되어 자산으로 쌓입니다!
-        
-        *예: 전세를 살면 집값은 안 오르지만 매달 나가는 이자가 적어, 남는 월급으로 주식을 매달 더 많이 사 모을 수 있습니다.*
+        - 특히 **월세**의 경우, 연말정산으로 돌려받는 **세액공제 환급금까지 전액 재투자**되어 복리로 굴러갑니다.
         """)
 
     invest_preset = st.radio(
@@ -106,7 +103,7 @@ with tab1:
         risk_badge = f"🔴 **깡통전세 위험 매물** (전세가율 {jeonse_ratio:.1f}%) : 매매가 하락 시 보증금 미반환 위험"
         badge_color = "error"
 
-    # 2. 월세 세액공제 계산
+    # 2. 월세 세액공제 계산 엔진
     annual_rent_paid = monthly_rent * 12
     tax_credit_base = min(1000.0, float(annual_rent_paid))
 
@@ -195,55 +192,92 @@ with tab1:
 
     buy_loan_amt = min(buy_loan["limit"], max(0, buy_price - user_cash))
     buy_annual_interest = buy_loan_amt * (buy_loan["rate"] / 100)
-    buy_monthly_cost = (buy_annual_interest + buy_annual_holding) / 12  # 매달 나가는 주거비용 (이자 + 보유세/건보)
+    buy_monthly_cost = (buy_annual_interest + buy_annual_holding) / 12
     buy_equity_used = buy_price - buy_loan_amt + buy_initial_costs
-    buy_free_cash = max(0, user_cash - buy_equity_used)                # 매매 후 남는 초기 목돈
+    buy_free_cash = max(0, user_cash - buy_equity_used)
 
     jeonse_loan_amt = min(jeonse_loan["limit"], max(0, jeonse_price - user_cash))
     jeonse_annual_interest = jeonse_loan_amt * (jeonse_loan["rate"] / 100)
-    jeonse_annual_guarantee = jeonse_price * 0.0012                     # HUG 보증료
+    jeonse_annual_guarantee = jeonse_price * 0.0012
     jeonse_monthly_cost = (jeonse_annual_interest + jeonse_annual_guarantee) / 12
     jeonse_equity_used = jeonse_price - jeonse_loan_amt
-    jeonse_free_cash = max(0, user_cash - jeonse_equity_used)           # 전세 후 남는 초기 목돈
+    jeonse_free_cash = max(0, user_cash - jeonse_equity_used)
 
-    effective_annual_rent = annual_rent_paid - annual_tax_refund
-    monthly_monthly_cost = effective_annual_rent / 12                  # 실질 월세 지출
-    monthly_free_cash = max(0, user_cash - monthly_deposit)            # 월세 후 남는 초기 목돈
+    # 월세의 월 주거비 지출 (순수 월세액)
+    monthly_monthly_cost = monthly_rent
+    monthly_free_cash = max(0, user_cash - monthly_deposit)
 
     # 매달 실제 투자에 투입되는 잉여 저축액
     buy_monthly_invest = max(0.0, monthly_invest_budget - buy_monthly_cost)
     jeonse_monthly_invest = max(0.0, monthly_invest_budget - jeonse_monthly_cost)
     monthly_monthly_invest = max(0.0, monthly_invest_budget - monthly_monthly_cost)
 
-    # 5. 거치식(목돈) + 적립식(월저축) 복리 미래가치 함수
-    def calculate_total_investment_fv(initial_lump_sum, monthly_contribution, years_count):
+    # -------------------------------------------------------------
+    # 5. [요구사항 2] 거치식 + 적립식 + 월세 환급금 재투자 복리 엔진
+    # -------------------------------------------------------------
+    def calculate_investment_details(initial_lump_sum, monthly_contribution, years_count, annual_extra_cash=0.0):
+        """
+        초기 목돈 복리 + 매월 적립금 복리 + 매년 유입되는 환급금 복리 재투자
+        반환값: (최종 평가액, 총 투입 원금, 순수 투자 수익)
+        """
+        # 1) 초기 목돈 거치식 복리
         lump_fv = initial_lump_sum * ((1 + after_tax_rate) ** years_count)
+        
+        # 2) 매월 적립식 복리 (월복리 연금 미래가치 수식)
         months_total = years_count * 12
         if monthly_r > 0:
-            annuity_fv = monthly_contribution * (((1 + monthly_r) ** months_total - 1) / monthly_r)
+            monthly_fv = monthly_contribution * (((1 + monthly_r) ** months_total - 1) / monthly_r)
         else:
-            annuity_fv = monthly_contribution * months_total
-        return lump_fv + annuity_fv
+            monthly_fv = monthly_contribution * months_total
 
+        # 3) [월세 특화] 매년 말 환급되는 세액공제 환급금의 복리 재투자
+        extra_fv = 0.0
+        if annual_extra_cash > 0:
+            for y in range(1, years_count + 1):
+                # 각 연도말에 들어온 환급금이 남은 기간 동안 복리로 불어남
+                rem_years = years_count - y
+                extra_fv += annual_extra_cash * ((1 + after_tax_rate) ** rem_years)
+
+        total_fv = lump_fv + monthly_fv + extra_fv
+        # 총 투입 원금 (초기 목돈 + 매월 부은 돈 + 환급받아 넣은 돈)
+        total_principal = initial_lump_sum + (monthly_contribution * months_total) + (annual_extra_cash * years_count)
+        # 순수 투자 수익 (이자 및 자본 이득)
+        pure_gain = total_fv - total_principal
+
+        return total_fv, total_principal, pure_gain
+
+    # 1~10년 타임라인 순자산 계산
     years = list(range(1, 11))
     buy_trajectory = []
     jeonse_trajectory = []
     monthly_trajectory = []
+    
+    # 거주기간별 순수 투자 수익 저장
+    buy_gains = []
+    jeonse_gains = []
+    monthly_gains = []
+
     bep_year = None
 
     for t in years:
+        # 매매
         future_val = buy_price * ((1 + price_growth_rate) ** t)
-        buy_invest_fv = calculate_total_investment_fv(buy_free_cash, buy_monthly_invest, t)
-        buy_nw = future_val - buy_loan_amt + buy_invest_fv
+        buy_fv, buy_princ, buy_gain = calculate_investment_details(buy_free_cash, buy_monthly_invest, t, 0.0)
+        buy_nw = future_val - buy_loan_amt + buy_fv
         buy_trajectory.append(buy_nw)
+        buy_gains.append(buy_gain)
 
-        jeonse_invest_fv = calculate_total_investment_fv(jeonse_free_cash, jeonse_monthly_invest, t)
-        jeonse_nw = jeonse_price - jeonse_loan_amt + jeonse_invest_fv
+        # 전세
+        jeonse_fv, jeonse_princ, jeonse_gain = calculate_investment_details(jeonse_free_cash, jeonse_monthly_invest, t, 0.0)
+        jeonse_nw = jeonse_price - jeonse_loan_amt + jeonse_fv
         jeonse_trajectory.append(jeonse_nw)
+        jeonse_gains.append(jeonse_gain)
 
-        monthly_invest_fv = calculate_total_investment_fv(monthly_free_cash, monthly_monthly_invest, t)
-        monthly_nw = monthly_deposit + monthly_invest_fv
+        # 월세 (매년 환급금 annual_tax_refund 재투자 적용!)
+        monthly_fv, monthly_princ, monthly_gain = calculate_investment_details(monthly_free_cash, monthly_monthly_invest, t, annual_tax_refund)
+        monthly_nw = monthly_deposit + monthly_fv
         monthly_trajectory.append(monthly_nw)
+        monthly_gains.append(monthly_gain)
 
         if bep_year is None and buy_nw > max(jeonse_nw, monthly_nw):
             bep_year = t
@@ -262,20 +296,24 @@ with tab1:
     cur_monthly = monthly_trajectory[cur_idx]
     best_val = max(cur_buy, cur_jeonse, cur_monthly)
 
+    cur_buy_gain = buy_gains[cur_idx]
+    cur_jeonse_gain = jeonse_gains[cur_idx]
+    cur_monthly_gain = monthly_gains[cur_idx]
+
     if best_val == cur_buy:
         best_strategy = "매매 (자가 구입)"
         strategy_msg = f"부동산 자산 상승분(연 {price_growth_rate*100:.1f}%)과 레버리지 효과가 매월 나가는 이자비용을 압도하여 가장 많은 자산을 축적합니다."
     elif best_val == cur_jeonse:
         best_strategy = "전세"
-        strategy_msg = f"저금리 기금 전세대출로 주거비를 아끼고, 남은 월급(월 {jeonse_monthly_invest:.0f}만원)을 꾸준히 복리 투자한 결과가 가장 유리합니다."
+        strategy_msg = f"저금리 기금 전세대출로 주거비를 아끼고, 남은 월급을 꾸준히 복리 투자({holding_years}년 누적수익 +{cur_jeonse_gain:.0f}만원)한 결과가 가장 유리합니다."
     else:
         best_strategy = "월세"
-        strategy_msg = f"보증금으로 묶이지 않은 거액의 목돈({monthly_free_cash/10000:.1f}억원)과 매월 남는 월급(월 {monthly_monthly_invest:.0f}만원)을 금융상품에 집중 투자(세후 연 {after_tax_rate*100:.2f}%)한 결과가 가장 우세합니다."
+        strategy_msg = f"보증금으로 묶이지 않은 목돈과 매년 환급되는 월세 세액공제금의 복리 재투자({holding_years}년 누적수익 +{cur_monthly_gain:.0f}만원)가 월세 지출을 압도합니다."
 
     st.subheader(f"🎯 {holding_years}년 거주 시 최적 선택: **'{best_strategy}'**")
     st.markdown(f"> {strategy_msg} (예상 최종 순자산: **{best_val/10000:.2f}억원**)")
 
-    # [핵심 설명팁 추가] 매월 현금흐름 & 적립식 투자 배분 안내 박스
+    # 월간 현금흐름 배분 안내 박스
     st.markdown(f"""
     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin: 15px 0;">
         <h4 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b;">
@@ -284,15 +322,14 @@ with tab1:
         <div style="display: flex; gap: 15px; font-size: 12px; color: #475569; flex-wrap: wrap;">
             <div>🏠 <strong>매매</strong>: 주거비(이자+세금) <strong>{buy_monthly_cost:.0f}만</strong> 지출 ➔ <strong>남는 {buy_monthly_invest:.0f}만원/월</strong> 매달 복리투자</div>
             <div>🔑 <strong>전세</strong>: 주거비(전세대출이자) <strong>{jeonse_monthly_cost:.0f}만</strong> 지출 ➔ <strong>남는 {jeonse_monthly_invest:.0f}만원/월</strong> 매달 복리투자</div>
-            <div>📄 <strong>월세</strong>: 실질 월세(세액공제 차감) <strong>{monthly_monthly_cost:.0f}만</strong> 지출 ➔ <strong>남는 {monthly_monthly_invest:.0f}만원/월</strong> 매달 복리투자</div>
+            <div>📄 <strong>월세</strong>: 월세 <strong>{monthly_monthly_cost:.0f}만</strong> 지출 ➔ <strong>남는 {monthly_monthly_invest:.0f}만원/월 + 연말정산 환급금</strong> 매달/매년 복리투자</div>
         </div>
-        <p style="margin: 6px 0 0 0; font-size: 11px; color: #64748b;">
-            * 매달 지출 후 남은 잉여 자금은 선택하신 투자 상품(세후 연 {after_tax_rate*100:.2f}%)에 매월 적립식 복리로 쌓여 최종 순자산에 가산됩니다.
-        </p>
     </div>
     """, unsafe_allow_html=True)
 
-    # 3개 비교 카드
+    # -------------------------------------------------------------
+    # [요구사항 1] 3개 비교 카드 (예상 거주기간 누적 투자수익 표기)
+    # -------------------------------------------------------------
     mcol1, mcol2, mcol3 = st.columns(3)
     with mcol1:
         st.metric(
@@ -308,7 +345,8 @@ with tab1:
 
         st.caption(f"• 대출액: {buy_loan_amt/10000:.1f}억 (월이자 약 {buy_annual_interest/12:.0f}만원)")
         st.caption(f"• 매월 주거비 지출: 월 약 {buy_monthly_cost:.0f}만원 (이자+세금)")
-        st.caption(f"• **월 잔여 적립투자금**: **월 {buy_monthly_invest:.0f}만원** (총 예산 {monthly_invest_budget}만 중)")
+        # 누적 투자수익 표기
+        st.caption(f"• **{holding_years}년 누적 투자수익**: :green[**+ {cur_buy_gain:.0f}만원**] (순수 금융수익)")
 
     with mcol2:
         st.metric(
@@ -324,7 +362,8 @@ with tab1:
 
         st.caption(f"• 대출액: {jeonse_loan_amt/10000:.1f}억 (월이자 약 {jeonse_annual_interest/12:.0f}만원)")
         st.caption(f"• 초기 여유 목돈: {jeonse_free_cash/10000:.1f}억원")
-        st.caption(f"• **월 잔여 적립투자금**: **월 {jeonse_monthly_invest:.0f}만원** (총 예산 {monthly_invest_budget}만 중)")
+        # 누적 투자수익 표기
+        st.caption(f"• **{holding_years}년 누적 투자수익**: :green[**+ {cur_jeonse_gain:.0f}만원**] (순수 금융수익)")
 
     with mcol3:
         st.metric(
@@ -334,8 +373,9 @@ with tab1:
             help="보증금이 적어 대출이 필요 없으며, 남는 목돈 전액과 매달 아낀 대출이자 차액을 금융상품에 집중 투자합니다."
         )
         st.caption(f"• {tax_credit_desc}")
-        st.caption(f"• 초기 여유 목돈: {monthly_free_cash/10000:.1f}억원")
-        st.caption(f"• **월 잔여 적립투자금**: **월 {monthly_monthly_invest:.0f}만원** (총 예산 {monthly_invest_budget}만 중)")
+        st.caption(f"• 초기 여유 목돈: {monthly_free_cash/10000:.1f}억원 (보증금 제외 전액투자)")
+        # 월세 세액공제 환급금 재투자가 반영된 누적 투자수익 표기
+        st.caption(f"• **{holding_years}년 누적 투자수익**: :green[**+ {cur_monthly_gain:.0f}만원**] (환급금 재투자 반영)")
 
     # 7. BEP 인터랙티브 차트
     st.markdown("---")
@@ -344,15 +384,15 @@ with tab1:
     with st.expander("❓ **이 차트가 무엇을 의미하나요? (1분 이해 가이드 클릭)**", expanded=True):
         st.markdown(f"""
         이 그래프는 **'지금 선택한 집에서 1년~10년 동안 살다가 이사 나갈 때, 내 손에 최종적으로 남는 통장 잔고(순자산)'**를 비교한 것입니다.
-        현재 매월 **{monthly_invest_budget}만원**의 저축 예산 중 주거비를 내고 남는 돈이 매달 금융상품(세후 연 {after_tax_rate*100:.2f}%)에 자동으로 적립식 투자됩니다.
+        현재 매월 **{monthly_invest_budget}만원**의 저축 예산 중 주거비를 내고 남는 돈과 월세 환급금이 매달 금융상품(세후 연 {after_tax_rate*100:.2f}%)에 자동으로 적립식 투자됩니다.
         
         1. **🟦 파란색 선 (매매)**: 
-           - 처음 1~2년에는 **취득세, 중개수수료 등 목돈 비용**과 높은 대출이자 지출로 매월 투자할 수 있는 돈(월 {buy_monthly_invest:.0f}만원)이 가장 적어 낮게 시작합니다.
+           - 처음 1~2년에는 **취득세, 중개수수료 등 목돈 비용**과 높은 대출이자 지출로 매월 투자할 수 있는 돈이 적어 낮게 시작합니다.
            - 하지만 매달 집값이 연 {price_growth_rate*100:.1f}%씩 복리로 상승하므로 거주 기간이 길어질수록 자산 성장 속도가 가장 가파릅니다.
         2. **🟩 초록색 점선 (전세)**:
-           - 저금리 정책대출로 월 주거비를 아끼고 남는 목돈과 월급(월 {jeonse_monthly_invest:.0f}만원)을 꾸준히 적립식 투자한 결과입니다.
+           - 저금리 정책대출로 월 주거비를 아끼고 남는 목돈과 월급을 꾸준히 적립식 투자({holding_years}년 누적수익 +{cur_jeonse_gain:.0f}만원)한 결과입니다.
         3. **🟧 주황색 선 (월세)**:
-           - 보증금이 가장 적게 들기 때문에 **가장 큰 목돈({monthly_free_cash/10000:.1f}억원)과 매월 남는 월급(월 {monthly_monthly_invest:.0f}만원)**을 금융상품에 굴려 자산을 불려 나갑니다.
+           - 보증금이 가장 적게 들기 때문에 **가장 큰 목돈({monthly_free_cash/10000:.1f}억원)과 매년 환급받는 월세 세액공제금을 모두 복리로 굴려** 높은 금융 투자 수익({holding_years}년 누적수익 +{cur_monthly_gain:.0f}만원)을 달성합니다.
         4. **⭐ 교차점 (골든크로스 / BEP)**:
            - **파란색 선(매매)이 초록색/주황색 선을 뚫고 올라가는 순간**입니다! 즉, **"이 기간 이상 살 거면 무조건 집을 사는 게 돈을 번다"**는 손익분기점입니다.
         """)
